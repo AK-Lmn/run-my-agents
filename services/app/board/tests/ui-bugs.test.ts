@@ -185,3 +185,20 @@ void PAGE_CSS;
 void unscoped;
 void styles;
 void handler;
+
+// Found on bot.flisk.si (2026-11-14): sessions with no PR number, the plain design and the New session form.
+describe("board dogfood, bot.flisk.si", () => {
+	it("a pull request without a number shows no #0", () => {
+		expect(PAGE).not.toContain('"#"+r.number,');
+		expect(PAGE).not.toContain('" · #"+r.number');
+	});
+	it("the plain design hides the flying sent text instead of freezing it over the composer", () => {
+		expect(PAGE_CSS).toContain("body.plain .sent{display:none}");
+	});
+	it("a folder that is not a path (a job link) is not put in the New session form", () => {
+		expect(PAGE).toContain('/^[/~]/.test(cur.cwd||"")');
+	});
+	it("Escape closes the token limit panel", () => {
+		expect(PAGE).toContain("if(showLimits){showLimits=false;render()}");
+	});
+});

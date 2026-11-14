@@ -537,6 +537,7 @@ body.plain .tooldet{background:#f6f8fa!important;border:1px solid var(--line);bo
 body.plain .ci{background:#fff!important;box-shadow:inset 0 0 0 1px var(--line)}body.plain .ci code{color:var(--text)}
 body.plain .compose{background:#fff!important;border:1px solid var(--line);border-radius:6px}
 body.plain #msg{color:var(--text);font-family:var(--body)}
+body.plain .sent{display:none}
 body.plain .newpill{background:#0969da!important;color:#fff;border-radius:6px}
 body.plain .toast{background:#1f2328!important;color:#fff;border-radius:6px}
 body.plain .badge{background:#0969da!important;color:#fff}
@@ -854,7 +855,7 @@ async function openNew(){await opts();const cur=S.find(x=>x.id===sel)||S[0]||{};
  ND={agent:OPT.defaultAgent,role:"Code",manual:false,agentManual:false,model:"",effort:""};
  const d=$("dlg");d.hidden=false;
  pRender(null,d);pRender(H(NewDlg),d);
- $("ncwd").value=cur.cwd||OPT.folders[0]||"";$("ntext").value=loadDraft("new");drawNew();$("ntext").focus();
+ $("ncwd").value=/^[\/~]/.test(cur.cwd||"")?cur.cwd:(OPT.folders[0]||"");$("ntext").value=loadDraft("new");drawNew();$("ntext").focus();
  const card=d.querySelector(".dcard");requestAnimationFrame(()=>requestAnimationFrame(()=>card.classList.add("live")))}
 $("dlg").addEventListener("click",e=>{const t=e.target;let el;
  if(el=t.closest("[data-model]")){ND.model=el.dataset.model;updateDial($("dlg"),ND.model);e.stopPropagation();return}
@@ -862,7 +863,7 @@ $("dlg").addEventListener("click",e=>{const t=e.target;let el;
  if(el=t.closest("[data-folder]")){$("ncwd").value=el.dataset.folder;markFolders();e.stopPropagation();return}});
 document.addEventListener("input",e=>{if(e.target.id==="ncwd")markFolders()});
 document.addEventListener("input",e=>{if(e.target.id!=="ntext")return;saveDraft("new",e.target.value);clearTimeout(dt);dt=setTimeout(async()=>{const t=$("ntext")&&$("ntext").value;if(!t||!ND)return;const r=await fetch("api/detect?text="+encodeURIComponent(t)).then(r=>r.json()).catch(()=>null);if(!r||!ND)return;if(!ND.manual)ND.role=r.role;if(!ND.agentManual&&r.agent)ND.agent=r.agent;drawNew()},200)});
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){hideMenu();if(!$("dlg").hidden)$("dlg").hidden=true}if(e.target.id==="ntext"&&e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();startNew()}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){hideMenu();if(!$("dlg").hidden)$("dlg").hidden=true;if(showLimits){showLimits=false;render()}}if(e.target.id==="ntext"&&e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();startNew()}});
 async function startNew(){const text=$("ntext").value.trim();if(!text){toast("Describe the task first");$("ntext").focus();return}
  const natt=ATT.new||[];if(natt.some(f=>!f.path&&!f.err)){toast("Still uploading\u2026");return}const files=natt.filter(f=>f.path).map(f=>f.path);
  const r=await post("api/new",{agent:ND.agent,cwd:$("ncwd").value.trim(),text,role:ND.manual?ND.role:"",model:ND.agent==="claude"?ND.model:"",effort:ND.agent==="claude"?ND.effort:"",files}).catch(()=>({error:"The board is not answering."}));
@@ -1081,9 +1082,9 @@ function showUmux(chip){hideMenu();hideAct();const p=document.createElement("div
 umuxLoad();
 function placeBelow(p,el){const b=el.getBoundingClientRect(),r=p.getBoundingClientRect();p.style.left=Math.max(8,Math.min(b.left,innerWidth-r.width-8))+"px";p.style.top=Math.max(8,Math.min(b.bottom+6,innerHeight-r.height-8))+"px"}
 function prLead(prs){const o=prs.filter(r=>r.state==="OPEN");return o[0]||prs[0]}
-function prRow(s){const prs=s.prs||[];if(!prs.length)return null;const r=prLead(prs),st=String(r.state||"OPEN").toLowerCase(),k=st==="open"&&r.draft?"draft":st;return H("span",{class:"prc "+k,"data-prs":s.id,title:prs.length+" pull request"+(prs.length>1?"s":"")+" · #"+r.number+" "+(r.draft?"draft":st)+(r.checks?" · checks "+r.checks:"")+(r.merge==="DIRTY"?" · conflicts":"")},prIcon(r.state),"#"+r.number,prs.length>1?H("em",null,"+"+(prs.length-1)):null,r.checks&&st==="open"?H("i",{class:"ck "+r.checks}):null,r.merge==="DIRTY"&&st==="open"?H("i",{class:"ck fail",title:"conflicts"}):null)}
+function prRow(s){const prs=s.prs||[];if(!prs.length)return null;const r=prLead(prs),st=String(r.state||"OPEN").toLowerCase(),k=st==="open"&&r.draft?"draft":st;return H("span",{class:"prc "+k,"data-prs":s.id,title:prs.length+" pull request"+(prs.length>1?"s":"")+" · "+(r.number?"#"+r.number+" ":"")+(r.draft?"draft":st)+(r.checks?" · checks "+r.checks:"")+(r.merge==="DIRTY"?" · conflicts":"")},prIcon(r.state),r.number?"#"+r.number:null,prs.length>1?H("em",null,"+"+(prs.length-1)):null,r.checks&&st==="open"?H("i",{class:"ck "+r.checks}):null,r.merge==="DIRTY"&&st==="open"?H("i",{class:"ck fail",title:"conflicts"}):null)}
 function prSync(r){const w=[];if(r.draft)w.push("draft");if(r.checks)w.push({pass:"checks passed",fail:"checks failed",pending:"checks running"}[r.checks]);if(r.review)w.push({APPROVED:"approved",CHANGES_REQUESTED:"changes requested",REVIEW_REQUIRED:"review needed"}[r.review]||r.review.toLowerCase());if(r.merge&&String(r.state).toUpperCase()==="OPEN")w.push({CLEAN:"ready to merge",BLOCKED:"blocked",BEHIND:"behind base",DIRTY:"conflicts",UNSTABLE:"unstable checks",HAS_HOOKS:"ready to merge"}[r.merge]||r.merge.toLowerCase());return w.join(" \u00b7 ")}
-function PrPop({s,d}){return H(Frag,null,H("div",{class:"prh"},Ic(IC.branch),H("span",null,"Pull requests"),H("em",null,s.branch||"")),H("div",{class:"prb"},d===null?[H("div",{class:"prsk"}),H("div",{class:"prsk"})]:d.error?H("div",{class:"pre"},d.error):d.prs.length?d.prs.map((r,i)=>H("a",{key:r.url,class:"prr "+String(r.state||"OPEN").toLowerCase(),style:"--i:"+i,href:r.url,target:"_blank",rel:"noopener noreferrer"},prIcon(r.state),H("span",{class:"prt"},H("b",null,"#"+r.number)," "+(r.title||"Pull request")),H("small",null,(r.repo||"")+(r.branch?" · "+r.branch:"")+(prSync(r)?" · "+prSync(r):"")),H("i",{class:"prs"},r.state||"OPEN"))):H("div",{class:"pre"},"No pull requests for this branch yet.")))}
+function PrPop({s,d}){return H(Frag,null,H("div",{class:"prh"},Ic(IC.branch),H("span",null,"Pull requests"),H("em",null,s.branch||"")),H("div",{class:"prb"},d===null?[H("div",{class:"prsk"}),H("div",{class:"prsk"})]:d.error?H("div",{class:"pre"},d.error):d.prs.length?d.prs.map((r,i)=>H("a",{key:r.url,class:"prr "+String(r.state||"OPEN").toLowerCase(),style:"--i:"+i,href:r.url,target:"_blank",rel:"noopener noreferrer"},prIcon(r.state),H("span",{class:"prt"},H("b",null,r.number?"#"+r.number:"")," "+(r.title||"Pull request")),H("small",null,(r.repo||"")+(r.branch?" · "+r.branch:"")+(prSync(r)?" · "+prSync(r):"")),H("i",{class:"prs"},r.state||"OPEN"))):H("div",{class:"pre"},"No pull requests for this branch yet.")))}
 function mountPop(cls,chip){const p=document.createElement("div");p.className=cls;p._chip=chip;document.body.appendChild(p);return p}
 function drawPop(p,v){pRender(v,p);placeBelow(p,p._chip)}
 function hidePrs(){if(prEl){prEl.remove();prEl=null}}

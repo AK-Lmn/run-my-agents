@@ -19,6 +19,11 @@ describe("pages", () => {
 		expect(csp.match(/script-src ([^;]*)/)?.[1]).toMatch(
 			/^'sha256-[A-Za-z0-9+/=]+' https:\/\/flisk\.si https:\/\/flisk\.sh$/,
 		);
+		// the page counts visits (cookieless beacon), so the policy lets the script load and the beacon leave
+		expect(csp).toContain("connect-src https://analytics.flisk.si;");
+		expect(await res.text()).toContain(
+			'<script defer data-domain="run-my-agents.flisk.si" src="https://flisk.sh/a.js"></script><script src="https://flisk.si/assets/bar.js" defer></script>',
+		);
 		// every other page keeps the strict default: only the Flisk bar script may run
 		const about = await app.request("/about");
 		expect(about.headers.get("content-security-policy")).toContain(
@@ -26,6 +31,9 @@ describe("pages", () => {
 		);
 		expect(about.headers.get("content-security-policy")).toContain(
 			"connect-src https://analytics.flisk.si;",
+		);
+		expect(await about.text()).toContain(
+			'<script defer data-domain="run-my-agents.flisk.si" src="https://flisk.sh/a.js"></script>',
 		);
 	});
 
@@ -237,9 +245,12 @@ describe("Kitchen Rush game", () => {
 		expect(res.headers.get("content-security-policy")).toContain(
 			"script-src 'unsafe-inline' https://flisk.si https://flisk.sh;",
 		);
+		expect(res.headers.get("content-security-policy")).toContain(
+			"connect-src https://analytics.flisk.si;",
+		);
 		const html = await res.text();
 		expect(html).toContain(
-			'<script src="https://flisk.si/assets/bar.js" defer></script>',
+			'<script defer data-domain="run-my-agents.flisk.si" src="https://flisk.sh/a.js"></script><script src="https://flisk.si/assets/bar.js" defer></script>',
 		);
 		expect(html).toContain("KITCHEN RUSH");
 		// shipping is not binary: flaky tests let slip away are counted on the ship screen

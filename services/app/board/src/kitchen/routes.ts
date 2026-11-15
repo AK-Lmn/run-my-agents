@@ -20,6 +20,7 @@ import { JsonStore } from "./store";
 import { attachedBlock, ownFiles, uploadDir } from "../uploads";
 import { kindOf, laneOf, quickMath, zachman, zachmanLines } from "./triage";
 import { clip, haikuFit, installSkill, lessonsSkill, matchSkills, POLICY, readSkill, policyFor, SKILLS, skillset, skillsFor, skillState, STAGE_SKILLS, stock } from "./skills";
+import { logIncident, boardPark, unparkFixed, proposeDraft, classOfDraft, DRAFT_PREFIX, readIncidents, dropDraftClass } from "./doctor";
 
 export type KitchenCtx = {
 	read: () => Session[];
@@ -459,11 +460,16 @@ export function dropLostWorktrees(): string[] {
 			said.push(`#${t.n} worktree gone: ${t.worktree}`);
 		}
 		const done = t.stage === "done" || t.failed;
+		logIncident({ n: t.n, stage: t.stage, cls: "missing worktree", evidence: [`board: worktree gone: ${t.worktree}`] });
 		updateTask(t.id, {
 			worktree: undefined,
 			base: undefined,
 			roundBase: undefined,
-			...(done ? {} : { stuck: true, assignee: "", sentAt: 0, failures: [...(t.failures ?? []), `board: worktree gone: ${t.worktree}`].slice(-6) }),
+			...(done
+				? {}
+				: (t.wtRetry ?? 0) < 1
+					? { wtRetry: 1, assignee: "", sentAt: 0, failures: [...(t.failures ?? []), `board: worktree gone, recreating once: ${t.worktree}`].slice(-6) }
+					: { stuck: true, assignee: "", sentAt: 0, failures: [...(t.failures ?? []), `board: worktree gone: ${t.worktree}`].slice(-6) }),
 		});
 	}
 	return said;
@@ -1150,6 +1156,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			stages: STAGES,
 			roles: STAGE_ROLES,
 			wip: { on: st.wipOn, limit: st.wipLimit, held },
+			incidents: readIncidents(now).slice(-20),
 			tasks: beltOrder(readTasks()).map((t) => ({
 				...t,
 				assigneeLabel: getAssigneeLabel(t),
@@ -1158,7 +1165,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 				blocked: blockedOn(t),
 				prStale: t.stage === "done" && !!t.pr && !t.mergedAt && !t.closedAt && now - (t.servedAt ?? t.updated) > 86_400_000,
 				skills: t.skills.map((name) => ({ name, state: skillState(name), haiku: haikuFit(name) })),
-				why: t.assignee || t.stage === "done" ? "" : t.stuck ? "Stuck: look at it, then serve it or send it back." : t.atPass ? (settings().auto ? "Spec done: crossing the pass." : "Waiting at the pass for your approval.") : t.skills.some((n) => skillState(n) === "get" || skillState(n) === "miss") ? "Installing its skills." : t.parked ? "Parked: it takes no slot until you un-park it." : full && !t.startedAt ? `Waiting: ${held} of ${st.wipLimit} orders in progress.` : pick(t, settings().auto).why,
+				why: t.assignee || t.stage === "done" ? "" : t.title.startsWith(DRAFT_PREFIX) && !t.approved ? `From the doctor: ${classOfDraft(t.title)} stopped two orders. Approve it to cook the fix.` : t.stuck ? "Stuck: look at it, then serve it or send it back." : t.atPass ? (settings().auto ? "Spec done: crossing the pass." : "Waiting at the pass for your approval.") : t.skills.some((n) => skillState(n) === "get" || skillState(n) === "miss") ? "Installing its skills." : t.parked ? "Parked: it takes no slot until you un-park it." : full && !t.startedAt ? `Waiting: ${held} of ${st.wipLimit} orders in progress.` : pick(t, settings().auto).why,
 			})),
 		});
 	});
@@ -1251,6 +1258,12 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		const no = guard(c);
 		if (no) return no;
 		const { id } = await body<{ id?: string }>(c);
+		const t = readTasks().find((x) => x.id === String(id));
+		if (!t) return c.json({ error: "That order is gone." }, 404);
+		if (t.title.startsWith(DRAFT_PREFIX)) {
+			const cls = classOfDraft(t.title) ?? "";
+			if (cls) dropDraftClass(cls);
+		}
 		return removeTask(String(id)) ? c.json({ dropped: true }) : c.json({ error: "That order is gone." }, 404);
 	});
 	/** Parks or un-parks an order: autopilot skips it and it takes no WIP slot. The order and its worktree are kept. */
@@ -1261,7 +1274,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		const t = readTasks().find((x) => x.id === String(id));
 		if (!t) return c.json({ error: "That order is gone." }, 404);
 		const on = typeof parked === "boolean" ? parked : !t.parked;
-		return c.json(updateTask(t.id, { parked: on, ...(on ? { assignee: "", sentAt: 0 } : {}) }));
+		return c.json(updateTask(t.id, { parked: on, parkedBy: on ? "hand" : undefined, parkCause: undefined, ...(on ? { assignee: "", sentAt: 0 } : {}) }));
 	});
 	app.post("/api/tasks/skills", async (c) => {
 		const no = guard(c);
@@ -1313,8 +1326,12 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		const wt = order.kind === "task" && ["spec", "build", "test", "review"].includes(order.stage) ? (order.worktree && !order.worktree.includes("/.git/kitchen/") ? order.worktree : await orderWorktree(order.cwd, order.n)) : undefined;
 		const noTree = order.kind === "task" && !wt && worktreeError(order.cwd);
 		if (noTree) {
-			// A board fault, not the agents': the order waits for you with git's reason, and no follow-up is made.
-			updateTask(order.id, { stuck: true, assignee: "", sentAt: 0, failures: [...(order.failures ?? []), `board: no worktree: ${noTree}`.slice(0, 300)].slice(-6) });
+			logIncident({ n: order.n, stage: order.stage, cls: "missing worktree", evidence: [`board: no worktree: ${noTree}`] });
+			if (!isDir(order.cwd)) {
+				boardPark(order.id, "missing worktree", order.cwd);
+			} else {
+				updateTask(order.id, { stuck: true, assignee: "", sentAt: 0, failures: [...(order.failures ?? []), `board: no worktree: ${noTree}`.slice(0, 300)].slice(-6) });
+			}
 			return { status: 409, body: { error: `#${order.n} has no worktree: ${noTree}` } };
 		}
 		if (wt && wt !== order.worktree) {
@@ -1455,6 +1472,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			} else {
 				// Back on the belt, but not for ever: after MAX_TURN_CRASHES of them the order is stuck with the error (#262).
 				const crashes = (cur.failures ?? []).filter((f) => f.startsWith(`${stage}: FAIL: the Flisk kitchen agent could not run`)).length + 1;
+				logIncident({ n: cur.n, stage, cls: "crashed turn", evidence: [`${stage}: ${msg}`.slice(0, 300)] });
 				updateTask(id, { assignee: "", sentAt: 0, ...(crashes >= MAX_TURN_CRASHES ? { stuck: true } : {}), failures: [...(cur.failures ?? []), `${stage}: ${msg}`].slice(-6) });
 			}
 			return;
@@ -1886,6 +1904,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 				updateTask(t.id, { atPass: false, approved: true, stage: "build", assignee: "", sentAt: 0 });
 				did.push(`#${t.n} approved`);
 			} else if (t.stuck && t.stage !== "done") {
+				logIncident({ n: t.n, stage: t.stage, evidence: (t.failures ?? []).slice(-2) });
 				updateTask(t.id, { stage: "done", failed: true, shipping: false, assignee: "", sentAt: 0, servedAt: now });
 				did.push(`#${t.n} closed as failed`);
 				const next = followUp(t);
@@ -1894,7 +1913,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			}
 		}
 		// With a Flisk kitchen agent there are no container agents to size.
-		did.push(...(agent() ? [] : autoscale()), ...retireMixed(), ...sidecar());
+		did.push(...(agent() ? [] : autoscale()), ...retireMixed(), ...sidecar(), ...unparkFixed(), ...proposeDraft(BOARD_ROOT, now));
 		for (const t of readTasks()) {
 			if (t.assignee?.startsWith("flisk:") && !inFlight.has(t.assignee)) {
 				// After a restart the agent may still be running the turn this board lost the reply of: sending it again
@@ -2049,7 +2068,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		const st = settings();
 		const since = wipSince();
 		const open = readTasks().filter((t) => {
-			if (t.stage === "done" || t.stuck || t.atPass || t.assignee === FRONT_DESK || t.parked) return false;
+			if (t.stage === "done" || t.stuck || t.atPass || t.assignee === FRONT_DESK || t.parked || (t.title.startsWith(DRAFT_PREFIX) && !t.approved)) return false;
 			if (st.wipOn && !t.startedAt && readTasks().filter((x) => holdsSlot(x, since)).length >= st.wipLimit) return false;
 			return true;
 		});

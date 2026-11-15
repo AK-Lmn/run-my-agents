@@ -16,11 +16,21 @@ describe("dropLostWorktrees", () => {
 
 		dropLostWorktrees();
 
-		const tasks = readTasks();
-		const updated = tasks.find((x) => x.id === t.id);
+		let tasks = readTasks();
+		let updated = tasks.find((x) => x.id === t.id);
+		expect(updated?.worktree).toBeUndefined();
+		expect(updated?.wtRetry).toBe(1);
+		expect(updated?.stuck).toBe(false);
+		expect(updated?.assignee).toBe("");
+
+		// Re-set the worktree to simulate a retry and call again
+		updateTask(t.id, { worktree: "/nonexistent/.kitchen/order-137" });
+		dropLostWorktrees();
+
+		tasks = readTasks();
+		updated = tasks.find((x) => x.id === t.id);
 		expect(updated?.worktree).toBeUndefined();
 		expect(updated?.stuck).toBe(true);
-		expect(updated?.assignee).toBe("");
 		expect(updated?.failures?.at(-1)).toContain("worktree gone");
 	});
 

@@ -98,6 +98,12 @@ export type Task = {
 	requeued?: number;
 	/** Parked by hand: autopilot skips it and it takes no WIP slot. Its worktree is kept (#133). */
 	parked?: boolean;
+	/** How many times the board has already recreated this order's missing worktree (doctor, at most 1). */
+	wtRetry?: number;
+	/** Who parked it: "hand" stays parked for good, "board" is un-parked when its cause is gone. */
+	parkedBy?: "hand" | "board";
+	/** Why the board parked it, and the path whose return means the cause is gone. */
+	parkCause?: { cls: string; path?: string };
 	/** Its pull request was merged: the slot it held is free. */
 	mergedAt?: number;
 	/** Its pull request was closed without merging: the slot it held is free. */
@@ -138,7 +144,7 @@ export function addTask(t: { title: string; cwd?: string; priority?: string; ski
 	return task;
 }
 
-export function updateTask(id: string, patch: Partial<Pick<Task, "stage" | "assignee" | "sentAt" | "approved" | "priority" | "title" | "rounds" | "stuck" | "crew" | "servedAt" | "atPass" | "missedBy" | "failed" | "startedAt" | "stageAt" | "answer" | "kind" | "zachman" | "skills" | "route" | "missedBy" | "requeued" | "lane" | "notes" | "cwd" | "shipping" | "pr" | "worktree" | "failures" | "depsFailed" | "carried" | "retryOf" | "followUp" | "answered" | "base" | "roundBase" | "waitingOn" | "asked" | "talk" | "draft" | "parked" | "mergedAt" | "closedAt" | "cut" | "merge" | "files" | "baseDirty">>): Task | undefined {
+export function updateTask(id: string, patch: Partial<Pick<Task, "stage" | "assignee" | "sentAt" | "approved" | "priority" | "title" | "rounds" | "stuck" | "crew" | "servedAt" | "atPass" | "missedBy" | "failed" | "startedAt" | "stageAt" | "answer" | "kind" | "zachman" | "skills" | "route" | "missedBy" | "requeued" | "lane" | "notes" | "cwd" | "shipping" | "pr" | "worktree" | "failures" | "depsFailed" | "carried" | "retryOf" | "followUp" | "answered" | "base" | "roundBase" | "waitingOn" | "asked" | "talk" | "draft" | "parked" | "mergedAt" | "closedAt" | "cut" | "merge" | "files" | "baseDirty" | "wtRetry" | "parkedBy" | "parkCause">>): Task | undefined {
 	const all = readTasks();
 	const t = all.find((x) => x.id === id);
 	if (!t) return undefined;

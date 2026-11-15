@@ -12,7 +12,13 @@ import type { Session } from "./sessions";
 export const ROLES: string[] = [...AGENTS.map((a) => a.role), ...KITCHEN_ROLES];
 
 /** Read on every call, so a different RUN_MY_AGENTS_DIR (tests, a second profile) just works. */
-const dir = () => process.env.RUN_MY_AGENTS_DIR || join(homedir(), ".run-my-agents");
+const LIVE = () => join(homedir(), ".run-my-agents");
+const dir = () => {
+	const d = process.env.RUN_MY_AGENTS_DIR || LIVE();
+	if (process.env.NODE_ENV === "test" && d === LIVE())
+		throw new Error(`dataDir() under test would use the live board folder ${d}: set RUN_MY_AGENTS_DIR to a temp folder (see tests/setup.ts).`);
+	return d;
+};
 export const dataDir = dir;
 const file = () => join(dir(), "roles.json");
 const pinFile = () => join(dir(), "pins.json");

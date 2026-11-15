@@ -98,6 +98,12 @@ export type Task = {
 	requeued?: number;
 	/** Parked by hand: autopilot skips it and it takes no WIP slot. Its worktree is kept (#133). */
 	parked?: boolean;
+	/** Worktree retry attempted once after going missing. */
+	wtRetried?: boolean;
+	/** Who parked this order: "hand" for manual, "system" for autopilot. */
+	parkedBy?: "hand" | "system";
+	/** The incident class that caused system-park, to un-park when it's gone. */
+	parkCause?: string;
 	/** Its pull request was merged: the slot it held is free. */
 	mergedAt?: number;
 	/** Its pull request was closed without merging: the slot it held is free. */
@@ -138,7 +144,7 @@ export function addTask(t: { title: string; cwd?: string; priority?: string; ski
 	return task;
 }
 
-export function updateTask(id: string, patch: Partial<Pick<Task, "stage" | "assignee" | "sentAt" | "approved" | "priority" | "title" | "rounds" | "stuck" | "crew" | "servedAt" | "atPass" | "missedBy" | "failed" | "startedAt" | "stageAt" | "answer" | "kind" | "zachman" | "skills" | "route" | "missedBy" | "requeued" | "lane" | "notes" | "cwd" | "shipping" | "pr" | "worktree" | "failures" | "depsFailed" | "carried" | "retryOf" | "followUp" | "answered" | "base" | "roundBase" | "waitingOn" | "asked" | "talk" | "draft" | "parked" | "mergedAt" | "closedAt" | "cut" | "merge" | "files" | "baseDirty">>): Task | undefined {
+export function updateTask(id: string, patch: Partial<Pick<Task, "stage" | "assignee" | "sentAt" | "approved" | "priority" | "title" | "rounds" | "stuck" | "crew" | "servedAt" | "atPass" | "missedBy" | "failed" | "startedAt" | "stageAt" | "answer" | "kind" | "zachman" | "skills" | "route" | "missedBy" | "requeued" | "lane" | "notes" | "cwd" | "shipping" | "pr" | "worktree" | "failures" | "depsFailed" | "carried" | "retryOf" | "followUp" | "answered" | "base" | "roundBase" | "waitingOn" | "asked" | "talk" | "draft" | "parked" | "wtRetried" | "parkedBy" | "parkCause" | "mergedAt" | "closedAt" | "cut" | "merge" | "files" | "baseDirty">>): Task | undefined {
 	const all = readTasks();
 	const t = all.find((x) => x.id === id);
 	if (!t) return undefined;

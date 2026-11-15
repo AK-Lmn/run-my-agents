@@ -20,6 +20,7 @@ import { JsonStore } from "./store";
 import { attachedBlock, ownFiles, uploadDir } from "../uploads";
 import { kindOf, laneOf, quickMath, zachman, zachmanLines } from "./triage";
 import { clip, haikuFit, installSkill, lessonsSkill, matchSkills, POLICY, readSkill, policyFor, SKILLS, skillset, skillsFor, skillState, STAGE_SKILLS, stock } from "./skills";
+import { draftFor, dropClass, FIX_TITLE, logIncident, readDropped, readIncidents } from "./doctor";
 
 export type KitchenCtx = {
 	read: () => Session[];
@@ -457,13 +458,17 @@ export function dropLostWorktrees(): string[] {
 			lostWorktrees.add(t.id);
 			console.warn(`#${t.n}: worktree gone, order marked lost: ${t.worktree}`);
 			said.push(`#${t.n} worktree gone: ${t.worktree}`);
+			logIncident(t.n, t.stage, [`worktree gone: ${t.worktree}`]);
 		}
 		const done = t.stage === "done" || t.failed;
+		const retry = !done && !t.wtRetried && !!t.assignee;
 		updateTask(t.id, {
 			worktree: undefined,
 			base: undefined,
 			roundBase: undefined,
-			...(done ? {} : { stuck: true, assignee: "", sentAt: 0, failures: [...(t.failures ?? []), `board: worktree gone: ${t.worktree}`].slice(-6) }),
+			assignee: "",
+			sentAt: 0,
+			...(retry ? { wtRetried: true } : done ? {} : { stuck: true, failures: [...(t.failures ?? []), `board: worktree gone: ${t.worktree}`].slice(-6) }),
 		});
 	}
 	return said;
@@ -951,6 +956,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			const quiet = now - Math.max(t.sentAt, s?.updatedAt ?? 0);
 			if (quiet < home.container.missMinutes * 60_000) continue;
 			const r = strike(t.assignee, `#${t.n} ${t.stage}`, `Missed: no progress on "${t.title}" for ${home.container.missMinutes} min.`);
+			logIncident(t.n, t.stage, [`Missed: no progress on "${t.title}" for ${home.container.missMinutes} min${r?.fired ? " (agent fired)" : ""}`]);
 			if (r?.fired) k.close(t.assignee);
 			updateTask(t.id, { assignee: "", sentAt: 0, shipping: false, missedBy: [...(t.missedBy ?? []), t.assignee] });
 		}
@@ -1150,6 +1156,8 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			stages: STAGES,
 			roles: STAGE_ROLES,
 			wip: { on: st.wipOn, limit: st.wipLimit, held },
+			incidents: readIncidents(now).slice(-20).reverse(),
+			doctor: { dropped: readDropped() },
 			tasks: beltOrder(readTasks()).map((t) => ({
 				...t,
 				assigneeLabel: getAssigneeLabel(t),
@@ -1158,7 +1166,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 				blocked: blockedOn(t),
 				prStale: t.stage === "done" && !!t.pr && !t.mergedAt && !t.closedAt && now - (t.servedAt ?? t.updated) > 86_400_000,
 				skills: t.skills.map((name) => ({ name, state: skillState(name), haiku: haikuFit(name) })),
-				why: t.assignee || t.stage === "done" ? "" : t.stuck ? "Stuck: look at it, then serve it or send it back." : t.atPass ? (settings().auto ? "Spec done: crossing the pass." : "Waiting at the pass for your approval.") : t.skills.some((n) => skillState(n) === "get" || skillState(n) === "miss") ? "Installing its skills." : t.parked ? "Parked: it takes no slot until you un-park it." : full && !t.startedAt ? `Waiting: ${held} of ${st.wipLimit} orders in progress.` : pick(t, settings().auto).why,
+				why: t.assignee || t.stage === "done" ? "" : t.stuck ? "Stuck: look at it, then serve it or send it back." : t.title.startsWith(FIX_TITLE) && !t.approved ? `Doctor: ${t.zachman?.why ?? "a repeat failure"}. Approve to fix it.` : t.atPass ? (settings().auto ? "Spec done: crossing the pass." : "Waiting at the pass for your approval.") : t.skills.some((n) => skillState(n) === "get" || skillState(n) === "miss") ? "Installing its skills." : t.parked ? "Parked: it takes no slot until you un-park it." : full && !t.startedAt ? `Waiting: ${held} of ${st.wipLimit} orders in progress.` : pick(t, settings().auto).why,
 			})),
 		});
 	});
@@ -1251,6 +1259,8 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		const no = guard(c);
 		if (no) return no;
 		const { id } = await body<{ id?: string }>(c);
+		const t = readTasks().find((x) => x.id === String(id));
+		if (t && t.title.startsWith(FIX_TITLE) && !t.approved) dropClass(t.title.slice(FIX_TITLE.length));
 		return removeTask(String(id)) ? c.json({ dropped: true }) : c.json({ error: "That order is gone." }, 404);
 	});
 	/** Parks or un-parks an order: autopilot skips it and it takes no WIP slot. The order and its worktree are kept. */
@@ -1261,7 +1271,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		const t = readTasks().find((x) => x.id === String(id));
 		if (!t) return c.json({ error: "That order is gone." }, 404);
 		const on = typeof parked === "boolean" ? parked : !t.parked;
-		return c.json(updateTask(t.id, { parked: on, ...(on ? { assignee: "", sentAt: 0 } : {}) }));
+		return c.json(updateTask(t.id, { parked: on, parkedBy: on ? "hand" : undefined, parkCause: undefined, ...(on ? { assignee: "", sentAt: 0 } : {}) }));
 	});
 	app.post("/api/tasks/skills", async (c) => {
 		const no = guard(c);
@@ -1448,6 +1458,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			// The agent could not run the turn: a test or review counts as FAIL, a spec or build goes back on the belt.
 			const msg = `FAIL: the Flisk kitchen agent could not run this turn: ${String((e as Error).message ?? e).slice(0, 200)}`;
 			const cur = readTasks().find((x) => x.id === id);
+			if (cur) logIncident(cur.n, stage, [msg]);
 			if (!cur || cur.assignee !== who) return;
 			if (stage === "test" || stage === "review") {
 				fliskReplies.set(who, msg);
@@ -1855,6 +1866,26 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 		}
 	}
 
+	function unparkFixed(now = Date.now()): string[] {
+		const said: string[] = [];
+		for (const t of readTasks()) {
+			if (!t.parked || t.parkedBy !== "system") continue;
+			if (readIncidents(now).some((i) => i.n === t.n && i.cls === t.parkCause && now - i.at <= 10 * 60_000)) continue;
+			updateTask(t.id, { parked: false, parkedBy: undefined, parkCause: undefined });
+			said.push(`#${t.n} un-parked: ${t.parkCause ?? "its cause"} is gone`);
+		}
+		return said;
+	}
+
+	function proposeFix(now = Date.now()): string[] {
+		const open = readTasks().some((t) => t.title.startsWith(FIX_TITLE) && t.stage !== "done" && !t.failed);
+		const d = draftFor(readIncidents(now), readDropped(), open);
+		if (!d) return [];
+		const cwd = readTasks().find((t) => t.n === d.orders[0])?.cwd ?? "";
+		const made = addTask({ title: d.title, cwd, priority: "P2", route: "Bug", kind: "task", lane: "full", zachman: { what: d.what, how: "spec → build → test → pull request → review", where: cwd || "the board", who: "Bug agent", when: "When the belt is free", why: d.why } });
+		return [`#${made.n} drafted by the doctor: ${d.why}`];
+	}
+
 	/**
 	 * Autopilot, run by the server loop so orders move with no board page open and no buttons: specs cross the pass,
 	 * stuck orders close as failed, the autoscaler sizes the containers, finished steps move on (test and review by
@@ -1870,6 +1901,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 				did.push(`#${t.n} asked the front desk again`);
 			}
 		did.push(...letIdleGo(now));
+		did.push(...unparkFixed(now));
 		const all = k.read();
 		did.push(...tidy(all, now));
 		if (!settings().auto) return did;
@@ -1886,6 +1918,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 				updateTask(t.id, { atPass: false, approved: true, stage: "build", assignee: "", sentAt: 0 });
 				did.push(`#${t.n} approved`);
 			} else if (t.stuck && t.stage !== "done") {
+				logIncident(t.n, t.stage, (t.failures ?? []).slice(-3).length ? (t.failures ?? []).slice(-3) : [`stuck after ${t.rounds} rounds`]);
 				updateTask(t.id, { stage: "done", failed: true, shipping: false, assignee: "", sentAt: 0, servedAt: now });
 				did.push(`#${t.n} closed as failed`);
 				const next = followUp(t);
@@ -1894,6 +1927,7 @@ export function mountKitchen(app: Hono, k: KitchenCtx) {
 			}
 		}
 		// With a Flisk kitchen agent there are no container agents to size.
+		did.push(...proposeFix(now));
 		did.push(...(agent() ? [] : autoscale()), ...retireMixed(), ...sidecar());
 		for (const t of readTasks()) {
 			if (t.assignee?.startsWith("flisk:") && !inFlight.has(t.assignee)) {

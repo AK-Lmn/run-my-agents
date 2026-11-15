@@ -4,7 +4,7 @@
 
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { AGENTS } from "../../web/src/avatars";
 import { KITCHEN_ROLES } from "./kitchen/agents";
 import type { Session } from "./sessions";
@@ -12,7 +12,13 @@ import type { Session } from "./sessions";
 export const ROLES: string[] = [...AGENTS.map((a) => a.role), ...KITCHEN_ROLES];
 
 /** Read on every call, so a different RUN_MY_AGENTS_DIR (tests, a second profile) just works. */
-const dir = () => process.env.RUN_MY_AGENTS_DIR || join(homedir(), ".run-my-agents");
+export const REAL_DATA_DIR = () => join(homedir(), ".run-my-agents");
+const dir = () => {
+	const d = process.env.RUN_MY_AGENTS_DIR || REAL_DATA_DIR();
+	if (process.env.NODE_ENV === "test" && resolve(d) === resolve(REAL_DATA_DIR()))
+		throw new Error("dataDir(): a test must not use the real ~/.run-my-agents. Set RUN_MY_AGENTS_DIR (tests/setup.ts does it for the whole run).");
+	return d;
+};
 export const dataDir = dir;
 const file = () => join(dir(), "roles.json");
 const pinFile = () => join(dir(), "pins.json");

@@ -101,8 +101,15 @@ export function createApp(options: AppOptions = {}) {
 
 	app.use("*", async (c, next) => {
 		await next();
+		// A page that lets other sites frame it (the share card, via CSP frame-ancestors) must not get X-Frame-Options SAMEORIGIN.
+		const ancestors =
+			c.res.headers
+				.get("content-security-policy")
+				?.match(/frame-ancestors ([^;]*)/)?.[1] ?? "";
+		const sharedFrame = /https?:/.test(ancestors);
 		for (const [k, v] of Object.entries(securityHeaders()))
-			if (!c.res.headers.has(k)) c.res.headers.set(k, v);
+			if (!c.res.headers.has(k) && !(sharedFrame && k === "x-frame-options"))
+				c.res.headers.set(k, v);
 	});
 
 	app.get("/health", (c) =>

@@ -347,3 +347,34 @@ describe("images passed in (the Cloudflare Worker has no disk)", () => {
 		}
 	});
 });
+
+describe("baseline security headers", () => {
+	it("sends them on pages, JSON and 404s", async () => {
+		for (const path of ["/", "/about", "/health", "/robots.txt", "/nope"]) {
+			const res = await app.request(path);
+			expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+			expect(res.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+			expect(res.headers.get("strict-transport-security")).toBe(
+				"max-age=31536000; includeSubDomains",
+			);
+			expect(res.headers.get("referrer-policy")).toBe(
+				"strict-origin-when-cross-origin",
+			);
+			expect(res.headers.get("permissions-policy")).toBe(
+				"camera=(), microphone=(), geolocation=()",
+			);
+			expect(res.headers.get("content-security-policy")).toContain(
+				"frame-ancestors",
+			);
+		}
+	});
+
+	it("leaves out X-Frame-Options where the policy lets X frame the game", async () => {
+		const res = await app.request("/play");
+		expect(res.headers.get("content-security-policy")).toContain(
+			"frame-ancestors 'self' https://x.com",
+		);
+		expect(res.headers.has("x-frame-options")).toBe(false);
+		expect(res.headers.get("strict-transport-security")).toContain("max-age=");
+	});
+});

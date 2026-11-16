@@ -108,6 +108,20 @@ describe("doctor", () => {
 		expect(result).toHaveLength(0);
 	});
 
+	it("a finished draft does not draft the same evidence again", () => {
+		const now = Date.now();
+		logIncident({ n: 20, stage: "test", cls: "git timeout", evidence: ["e"] }, now);
+		logIncident({ n: 21, stage: "test", cls: "git timeout", evidence: ["e"] }, now);
+		expect(proposeDraft("/tmp", now)).toHaveLength(1);
+		const draft = readTasks().find((t) => t.title.startsWith(DRAFT_PREFIX))!;
+		updateTask(draft.id, { stage: "done" });
+		expect(proposeDraft("/tmp", now)).toHaveLength(0);
+		// two new orders with the same class are fresh evidence
+		logIncident({ n: 22, stage: "test", cls: "git timeout", evidence: ["e"] }, now);
+		logIncident({ n: 23, stage: "test", cls: "git timeout", evidence: ["e"] }, now);
+		expect(proposeDraft("/tmp", now)).toHaveLength(1);
+	});
+
 	it("a dropped draft is not proposed again", () => {
 		const now = Date.now();
 		dropDraftClass("dropped-class");

@@ -116,10 +116,19 @@ export function proposeDraft(cwd: string, now = Date.now()): string[] {
 	const incidents = readIncidents(now);
 	const dropped = droppedClasses();
 
+	// Orders already named by an earlier draft (open, done or failed) are covered: the same evidence must not
+	// draft the same class again once that fix has run.
+	const covered = new Set<string>();
+	for (const t of tasks) {
+		const cls = classOfDraft(t.title);
+		if (!cls) continue;
+		for (const m of t.title.matchAll(/#(\d+)/g)) covered.add(`${cls}#${m[1]}`);
+	}
+
 	// Group incidents by class
 	const byClass = new Map<string, Incident[]>();
 	for (const incident of incidents) {
-		if (!dropped.includes(incident.cls)) {
+		if (!dropped.includes(incident.cls) && !covered.has(`${incident.cls}#${incident.n}`)) {
 			if (!byClass.has(incident.cls)) byClass.set(incident.cls, []);
 			byClass.get(incident.cls)!.push(incident);
 		}

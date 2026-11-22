@@ -611,6 +611,8 @@ describe("kitchen pipeline bugs", () => {
 				failed = true;
 			}
 			expect(failed).toBe(true);
+			// The server sees the disconnect a moment after the client gives up.
+			for (let i = 0; i < 50 && !aborted; i++) await new Promise((r) => setTimeout(r, 20));
 			expect(aborted).toBe(true);
 		} finally {
 			server.stop(true);

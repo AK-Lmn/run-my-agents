@@ -155,11 +155,11 @@ function main() {
   const tool = input.tool_input || {};
   const raw = tool.file_path || tool.notebook_path;
   if (!session || !raw) return;
-  if (ignored(isAbsolute(raw) ? raw : resolve(input.cwd || process.cwd(), raw))) return debug("ignored", raw);
-
   const cwd = input.cwd || process.cwd();
   const requestedPath = isAbsolute(raw) ? raw : resolve(cwd, raw);
   const file = canonical(requestedPath);
+  const isLocked = locked(requestedPath) || locked(file);
+  if (!isLocked && ignored(requestedPath)) return debug("ignored", raw);
   const now = Date.now();
 
   mkdirSync(DIR, { recursive: true });
@@ -176,7 +176,6 @@ function main() {
   }
 
   const other = claims[file];
-  const isLocked = locked(requestedPath);
   const warnKey = other ? `${session}|${file}|${other.session}` : "";
   // A warning covers the other session's edits up to the moment it was given. If that session edits the file again
   // afterwards, this session is warned again (naming it), so it never overwrites newer work without being told.
@@ -184,7 +183,7 @@ function main() {
   let block = false;
   let again = false;
   if (other && other.session !== session && (isLocked || !(warned[warnKey] >= other.at))) {
-    again = Boolean(warned[warnKey]);
+    again = Boolean(warned[warnKey]) && !(warned[warnKey] >= other.at);
     warned[warnKey] = now;
     block = true;
   }

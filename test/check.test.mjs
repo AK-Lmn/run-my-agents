@@ -208,3 +208,19 @@ test(".run-my-agents.json configures mode, ignore globs, and ttlMinutes per repo
   // Env vars override .run-my-agents.json
   assert.equal(runHook(dir, edit("three", file, cwd), { RUN_MY_AGENTS_MODE: "off" }), "");
 });
+
+test("short TTL in one repo does not expire another repo's live claims", () => {
+  const { dir, cwd: repoA } = setup();
+  const repoB = join(dirname(repoA), "project-b");
+  mkdirSync(repoB, { recursive: true });
+  writeFileSync(join(repoA, ".run-my-agents.json"), JSON.stringify({ ttlMinutes: 25 }));
+  writeFileSync(join(repoB, ".run-my-agents.json"), JSON.stringify({ ttlMinutes: 1 }));
+
+  const fileA = join(repoA, "a.ts");
+  const fileB = join(repoB, "b.ts");
+  runHook(dir, edit("one", fileA, repoA));
+  runHook(dir, edit("two", fileB, repoB));
+
+  const output = runHook(dir, edit("three", fileA, repoA));
+  assert.match(output, /drops in 25 min/);
+});

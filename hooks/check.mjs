@@ -168,14 +168,14 @@ function main() {
   const session = input.session_id;
   if (session && input.hook_event_name === "SessionEnd") return release(session);
   const cwd = input.cwd || process.cwd();
-  const repoConfig = loadRepoConfig(cwd);
-  const mode = resolveMode(repoConfig);
-  if (mode === "off") return debug("off", session);
-  const ttlMs = resolveTtlMs(repoConfig);
   const tool = input.tool_input || {};
   const raw = tool.file_path || tool.notebook_path;
   if (!session || !raw) return;
   const requestedPath = isAbsolute(raw) ? raw : resolve(cwd, raw);
+  const repoConfig = loadRepoConfig(dirname(requestedPath));
+  const mode = resolveMode(repoConfig);
+  if (mode === "off") return debug("off", session);
+  const ttlMs = resolveTtlMs(repoConfig);
   if (ignored(requestedPath, process.env.RUN_MY_AGENTS_IGNORE || "", repoConfig.ignore)) return debug("ignored", raw);
 
   const file = canonical(requestedPath);
@@ -187,26 +187,30 @@ function main() {
   const state = readJson(FILE, { claims: {}, warned: {} });
   const claims = {};
   for (const [path, claim] of Object.entries(state.claims || {})) {
-    if (now - claim.at < ttlMs) claims[path] = claim;
+    const claimTtl = Number.isFinite(claim?.ttlMs) && claim.ttlMs > 0 ? claim.ttlMs : ttlMs;
+    if (now - claim.at < claimTtl) claims[path] = claim;
   }
   const warned = {};
-  for (const [key, at] of Object.entries(state.warned || {})) {
-    if (now - at < ttlMs) warned[key] = at;
+  for (const [key, entry] of Object.entries(state.warned || {})) {
+    const warnAt = typeof entry === "number" ? entry : entry?.at;
+    const warnTtl = typeof entry === "object" && Number.isFinite(entry?.ttlMs) && entry.ttlMs > 0 ? entry.ttlMs : ttlMs;
+    if (now - warnAt < warnTtl) warned[key] = entry;
   }
 
   const other = claims[file];
   const warnKey = other ? `${session}|${file}|${other.session}` : "";
+  const prevWarnAt = typeof warned[warnKey] === "number" ? warned[warnKey] : warned[warnKey]?.at;
   // A warning covers the other session's edits up to the moment it was given. If that session edits the file again
   // afterwards, this session is warned again (naming it), so it never overwrites newer work without being told.
   // A retry right after a warning still goes through: the other session has not edited since.
   let block = false;
   let again = false;
-  if (other && other.session !== session && !(warned[warnKey] >= other.at)) {
-    again = Boolean(warned[warnKey]);
-    warned[warnKey] = now;
+  if (other && other.session !== session && !(prevWarnAt >= other.at)) {
+    again = Boolean(prevWarnAt);
+    warned[warnKey] = { at: now, ttlMs: Math.max(ttlMs, other.ttlMs || ttlMs) };
     block = true;
   }
-  if (!block) claims[file] = { session, at: now, cwd, branch: branchOf(cwd) };
+  if (!block) claims[file] = { session, at: now, ttlMs, cwd, branch: branchOf(cwd) };
 
   const tmp = `${FILE}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify({ claims, warned }, null, 2));
@@ -216,7 +220,8 @@ function main() {
   debug(block ? "warned" : "claimed", session, file, block ? `held by ${other.session}` : "");
   if (!block) return;
   const where = other.branch ? ` on branch ${other.branch}` : "";
-  const drops = Math.max(1, Math.ceil((other.at + ttlMs - now) / 60_000));
+  const activeTtl = Number.isFinite(other.ttlMs) && other.ttlMs > 0 ? other.ttlMs : ttlMs;
+  const drops = Math.max(1, Math.ceil((other.at + activeTtl - now) / 60_000));
   const reason =
     `Run My Agents: another Claude session (${other.session.slice(0, 8)}${where}, in ${other.cwd}) ` +
     `edited ${basename(requestedPath)} ${again ? "again since you were warned, " : ""}${ago(now - other.at)}. ` +
